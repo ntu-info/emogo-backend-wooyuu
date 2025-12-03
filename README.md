@@ -37,16 +37,19 @@ This page allows TAs and instructors to:
 - RESTful API built with FastAPI
 - MongoDB Atlas integration for data persistence
 - Async/await pattern for high performance
+- **Video file upload and download support** - Upload actual video files, not just URLs!
+- **Interactive HTML data export/download page** - TAs can download videos directly
 - Interactive API documentation (Swagger UI & ReDoc)
 - Data validation with Pydantic models
-- HTML-based data export/download interface
+- Sample data population script for testing
 - Health check endpoint for monitoring
 
 ## 📋 API Endpoints
 
 ### Data Upload Endpoints (POST)
 
-- `POST /api/vlogs` - Upload a new vlog entry
+- `POST /api/vlogs` - Upload a new vlog entry (JSON with video URL)
+- `POST /api/vlogs/upload` - Upload a vlog with actual video file (multipart/form-data)
 - `POST /api/sentiments` - Upload sentiment/emotion data
 - `POST /api/gps` - Upload GPS coordinate data
 
@@ -61,8 +64,9 @@ This page allows TAs and instructors to:
 
 ### Export & Documentation
 
-- `GET /export` - Interactive data export/download page
+- `GET /export` - Interactive data export/download page (with video downloads!)
 - `GET /api/export/all` - Export all data as JSON
+- `GET /api/vlogs/download/{filename}` - Download a specific video file
 - `GET /docs` - Swagger UI documentation
 - `GET /redoc` - ReDoc documentation
 - `GET /health` - Health check endpoint
@@ -107,6 +111,22 @@ uvicorn main:app --reload
 ```
 
 The API will be available at `http://localhost:8000`
+
+### Populating Sample Data
+
+To populate the database with fake/sample data for testing:
+
+```bash
+python populate_sample_data.py
+```
+
+This script will:
+- Clear existing data (after confirmation)
+- Create 10 sample vlogs
+- Create 20 sample sentiments
+- Create 15 sample GPS coordinates
+
+This addresses the requirement that fake data can be used to populate the backend database.
 
 ## ☁️ Deployment on Render
 
@@ -186,7 +206,7 @@ Once deployed, visit:
 ### Using curl
 
 ```bash
-# Upload a vlog
+# Upload a vlog with JSON (video URL)
 curl -X POST "http://localhost:8000/api/vlogs" \
   -H "Content-Type: application/json" \
   -d '{
@@ -194,6 +214,13 @@ curl -X POST "http://localhost:8000/api/vlogs" \
     "video_url": "https://example.com/video.mp4",
     "title": "My Day"
   }'
+
+# Upload a vlog with actual video file
+curl -X POST "http://localhost:8000/api/vlogs/upload" \
+  -F "user_id=user123" \
+  -F "title=My Day" \
+  -F "description=A great day!" \
+  -F "video=@/path/to/your/video.mp4"
 
 # Upload sentiment
 curl -X POST "http://localhost:8000/api/sentiments" \

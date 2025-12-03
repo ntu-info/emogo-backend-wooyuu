@@ -1,9 +1,13 @@
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime
 import os
+import shutil
+from pathlib import Path
+import uuid
 
 from models import (
     VlogModel, SentimentModel, GPSCoordinateModel,
@@ -14,11 +18,22 @@ from models import (
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "emogo_db")
 
+# File storage configuration
+UPLOAD_DIR = Path("uploads")
+VIDEOS_DIR = UPLOAD_DIR / "videos"
+
+# Create upload directories if they don't exist
+UPLOAD_DIR.mkdir(exist_ok=True)
+VIDEOS_DIR.mkdir(exist_ok=True)
+
 app = FastAPI(
     title="EmoGo Backend API",
     description="Backend API for EmoGo - collecting vlogs, sentiments, and GPS coordinates",
     version="1.0.0"
 )
+
+# Mount static files for serving uploaded videos
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 
 @app.on_event("startup")
@@ -60,7 +75,11 @@ async def root():
         <h2>Available Endpoints:</h2>
 
         <div class="endpoint">
-            <span class="method">POST</span> /api/vlogs - Upload a new vlog
+            <span class="method">POST</span> /api/vlogs - Upload a new vlog (JSON data with video URL)
+        </div>
+
+        <div class="endpoint">
+            <span class="method">POST</span> /api/vlogs/upload - Upload a vlog with video file (multipart/form-data)
         </div>
 
         <div class="endpoint">
@@ -136,6 +155,83 @@ async def get_vlog(vlog_id: str):
         raise HTTPException(status_code=404, detail="Vlog not found")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid ID format: {str(e)}")
+
+
+@app.post("/api/vlogs/upload", status_code=status.HTTP_201_CREATED)
+async def upload_vlog_with_file(
+    user_id: str = Form(...),
+    video: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None)
+):
+    """Upload a vlog with an actual video file"""
+
+    # Validate file type
+    allowed_extensions = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
+    file_ext = Path(video.filename).suffix.lower()
+
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+        )
+
+    # Generate unique filename
+    unique_filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = VIDEOS_DIR / unique_filename
+
+    # Save the uploaded file
+    try:
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+    finally:
+        video.file.close()
+
+    # Get file size
+    file_size = file_path.stat().st_size
+
+    # Create vlog entry with file reference
+    video_url = f"/uploads/videos/{unique_filename}"
+    download_url = f"/api/vlogs/download/{unique_filename}"
+
+    vlog_dict = {
+        "user_id": user_id,
+        "video_url": video_url,
+        "download_url": download_url,
+        "original_filename": video.filename,
+        "file_size": file_size,
+        "title": title,
+        "description": description,
+        "timestamp": datetime.utcnow()
+    }
+
+    result = await app.mongodb["vlogs"].insert_one(vlog_dict)
+
+    return {
+        "message": "Vlog uploaded successfully",
+        "id": str(result.inserted_id),
+        "video_url": video_url,
+        "download_url": download_url,
+        "file_size": file_size
+    }
+
+
+@app.get("/api/vlogs/download/{filename}")
+async def download_vlog_video(filename: str):
+    """Download a specific vlog video file"""
+    file_path = VIDEOS_DIR / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    return FileResponse(
+        path=file_path,
+        media_type="video/mp4",
+        filename=filename,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 # ==================== SENTIMENT ENDPOINTS ====================
@@ -314,8 +410,38 @@ async def export_data_page():
                 try {{
                     const response = await fetch(`/api/${{type}}`);
                     const data = await response.json();
-                    document.getElementById(elementId).innerHTML =
-                        '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+
+                    // Special handling for vlogs to show video download links
+                    if (type === 'vlogs' && Array.isArray(data)) {{
+                        let html = '<div style="max-height: 400px; overflow-y: auto;">';
+                        if (data.length === 0) {{
+                            html += '<p>No vlogs available</p>';
+                        }} else {{
+                            data.forEach((vlog, index) => {{
+                                html += `
+                                    <div style="border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; background: #fafafa;">
+                                        <h4 style="margin-top: 0;">Vlog #${{index + 1}}</h4>
+                                        <p><strong>User ID:</strong> ${{vlog.user_id}}</p>
+                                        <p><strong>Title:</strong> ${{vlog.title || 'N/A'}}</p>
+                                        <p><strong>Description:</strong> ${{vlog.description || 'N/A'}}</p>
+                                        <p><strong>Timestamp:</strong> ${{vlog.timestamp}}</p>
+                                        ${{vlog.file_size ? `<p><strong>File Size:</strong> ${{(vlog.file_size / 1024 / 1024).toFixed(2)}} MB</p>` : ''}}
+                                        ${{vlog.download_url ?
+                                            `<a href="${{vlog.download_url}}" class="download-btn" style="display: inline-block; margin-top: 10px;">📥 Download Video</a>` :
+                                            vlog.video_url ?
+                                            `<a href="${{vlog.video_url}}" class="view-btn" style="display: inline-block; margin-top: 10px;" target="_blank">🎥 View Video</a>` :
+                                            '<p style="color: #999;">No video available</p>'
+                                        }}
+                                    </div>
+                                `;
+                            }});
+                        }}
+                        html += '</div>';
+                        document.getElementById(elementId).innerHTML = html;
+                    }} else {{
+                        document.getElementById(elementId).innerHTML =
+                            '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    }}
                 }} catch (error) {{
                     document.getElementById(elementId).innerHTML =
                         '<p style="color: red;">Error loading data: ' + error.message + '</p>';
@@ -338,6 +464,11 @@ async def export_data_page():
                     }})
                     .catch(error => alert('Error downloading data: ' + error.message));
             }}
+
+            // Auto-load vlogs on page load
+            window.addEventListener('DOMContentLoaded', function() {{
+                loadData('vlogs', 'vlogs-preview');
+            }});
         </script>
     </head>
     <body>

@@ -106,3 +106,12 @@ venv.bak/
 
 # Mac OS
 .DS_Store
+
+# Uploaded files (videos, etc.)
+uploads/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.m4v
