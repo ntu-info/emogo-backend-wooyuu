@@ -12,8 +12,8 @@ A FastAPI-based backend service for the EmoGo application, designed to collect a
 
 **The data export and download page can be accessed at:**
 
-```
-https://your-deployment-url.onrender.com/export
+```[
+https://emogo-backend-wooyuu.onrender.com/export
 ```
 
 This page allows TAs and instructors to:
