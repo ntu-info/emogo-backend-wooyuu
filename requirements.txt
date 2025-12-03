@@ -3,3 +3,7 @@ motor[srv]
 pydantic
 python-multipart
 aiofiles
+Pillow
+opencv-python
+numpy
+aiohttp
