@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import random
 from pathlib import Path
 import aiohttp
+import ssl
 
 # Check if required packages are installed
 try:
@@ -209,7 +210,13 @@ async def populate_vlogs_with_videos(base_url="http://localhost:8000", count=10)
     """Create and upload vlogs with actual video files"""
     print(f"\nCreating {count} vlogs with real video files...")
 
-    async with aiohttp.ClientSession() as session:
+    # Create SSL context that doesn't verify certificates (for macOS compatibility)
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+    async with aiohttp.ClientSession(connector=connector) as session:
         for i in range(count):
             user_id = random.choice(SAMPLE_USERS)
             title = random.choice(SAMPLE_VLOG_TITLES)
